@@ -18,14 +18,29 @@ def pytest_addoption(parser):
         help='Path to the file where the collection will be dumped'
     )
     group.addoption(
-        '--report-url-api',
+        '--report-url-api-collection',
         action='store',
-        dest='report_url_api',
+        dest='report_url_api_collection',
         default=None,
-        help="URL to the API endpoint",
+        help="URL to the API endpoint for the collection",
+    )
+    group.addoption(
+        '--report-url-api-test',
+        action='store',
+        dest='report_url_api_test',
+        default=None,
+        help="URL to the API endpoint for each test",
+    )
+    group.addoption(
+        '--report-url-api-finalizer',
+        action='store',
+        dest='report_url_api_finalizer',
+        default=None,
+        help="URL to the API endpoint to finalize all the tests.",
     )
     group.addoption(
         '--username',
+        "-u",
         action='store',
         dest='username',
         default=None,
@@ -33,6 +48,7 @@ def pytest_addoption(parser):
     )
     group.addoption(
         '--token',
+        "-t",
         action='store',
         dest='token',
         default=None,
@@ -72,7 +88,8 @@ class NNAPlugin:
 
     def __init__(self, config):
         self._file_path_collection = config.getvalue("collection_output")
-        self._api_url = config.getvalue("report_url_api")
+        self._api_url_test = config.getvalue("report_url_api_test")
+        self._api_url_collection = config.getvalue("report_url_api_collection")
         self._username = config.getvalue("username")
         self._token = config.getvalue("token")
         self._test_run_id = config.getvalue("test_run_id")
@@ -84,37 +101,55 @@ class NNAPlugin:
     def pytest_report_collectionfinish(self, config, startdir, items):
         if self._file_path_collection:
             write_tests_collection(self._file_path_collection, items)
-
-    def pytest_runtest_makereport(self, item, call):
-        if self._api_url and self._username and self._token and self._test_run_id:
-            url = self._api_url.strip()
-            if not url.endswith("/"):
-                url += f"{url}/"
-            url = f"{url}tests/single-test/"
-
+        if self.is_api_enabled:
+            url = self._api_url_collection.strip()
             os_info = os.uname()
-            error_msg = ""
-            if call.result:
-                error_msg = f"{call.excinfo.typename}: {call.excinfo.value}"
-
             requests.post(
-                url,
+                url=url,
                 auth=self.auth,
                 data={
                     "run_test_id": self._test_run_id,
-                    "result": "FAIL" if error_msg else "PASS",
-                    "node_id": item.nodeid,
-                    "step": call.when,
-                    "duration": call.stop - call.start,
-                    "error": error_msg,
+                    "test_list": [i.node_id for i in items if i],
                     "sys_name": os_info.sysname,
                     "hostname": os_info.nodename,
                     "sys_release": os_info.release,
                     "sys_version": os_info.version,
                     "sys_machine": os_info.machine,
-                    "extra_info": item.user_properties,
-                },
+                }
             )
+
+    @property
+    def is_api_enabled(self) -> bool:
+        return (
+                self._api_url_test
+                and self._api_url_collection
+                and self._username
+                and self._token
+                and self._test_run_id
+        )
+
+    def pytest_runtest_makereport(self, item, call):
+        if not self.is_api_enabled:
+            return
+
+        url = self._api_url_test.strip()
+        error_msg = ""
+        if call.result:
+            error_msg = f"{call.excinfo.typename}: {call.excinfo.value}"
+
+        requests.post(
+            url,
+            auth=self.auth,
+            data={
+                "run_test_id": self._test_run_id,
+                "result": "FAIL" if error_msg else "PASS",
+                "node_id": item.nodeid,
+                "step": call.when,
+                "duration": call.stop - call.start,
+                "error": error_msg,
+                "extra_info": item.user_properties,
+            },
+        )
 
 def pytest_configure(config):
     config.pluginmanager.register(NNAPlugin(config), "_nna")

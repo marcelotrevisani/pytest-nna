@@ -28,9 +28,6 @@ class ArcaComponent:
             return return_value
         return wrapped_function
 
-    def __setattr__(self, key, value):
-        raise AttributeError(f"It is not possible to set elements.")
-
     def __getitem__(self, item):
         if item in self._all_components:
             return self._all_components[item].function
